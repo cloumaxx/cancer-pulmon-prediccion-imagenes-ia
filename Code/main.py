@@ -39,12 +39,12 @@ print("✅ clinical_labels.csv generado correctamente.")
 """
 if __name__ == "__main__":
     # build dataset
-    build_dataset(
+    """build_dataset(
         base_path="../Data/NSCLC-Radiomics",
         clinical_csv="../Data/clinical_labels.csv",
         output_dir="outputs",
         shape=(64, 64, 64)
-    )
+    )"""
 
     #X, y = load_data("outputs/X.npy", "outputs/y.npy")
     #model = train_cnn3d(X, y)
