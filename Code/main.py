@@ -40,8 +40,8 @@ print("✅ clinical_labels.csv generado correctamente.")
 if __name__ == "__main__":
     # build dataset
     build_dataset(
-        base_path="data/NSCLC-Radiomics",
-        clinical_csv="data/clinical_labels.csv",
+        base_path="../Data/NSCLC-Radiomics",
+        clinical_csv="../Data/clinical_labels.csv",
         output_dir="outputs",
         shape=(64, 64, 64)
     )
