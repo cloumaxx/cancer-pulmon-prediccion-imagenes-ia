@@ -159,3 +159,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 /Data
+Code/outputs/cnn3d_model.keras
+Code/outputs/X.npy
+Code/outputs/cnn3d_model.h5

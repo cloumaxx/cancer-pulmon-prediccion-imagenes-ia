@@ -5,8 +5,8 @@ from src.io.file_finder import find_ct_and_seg_paths
 from src.preprocessing.ct_loader import load_ct_volume
 
 def build_dataset(base_path, clinical_csv, output_dir, shape=(64, 64, 64)):
-    labels_df = pd.read_csv(clinical_csv)  # debe tener PatientID y CancerClass
-
+    labels_df = pd.read_csv(clinical_csv) 
+    
     X = []
     y = []
 
