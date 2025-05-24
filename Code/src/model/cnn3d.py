@@ -38,7 +38,7 @@ def build_cnn3d_model(input_shape, num_classes):
                   metrics=['accuracy'])
     return model
 
-def train_cnn3d_model(X, y, output_dir="outputs", model_name="cnn3d_model", epochs=30, batch_size=32):
+def train_cnn3d_model(X, y, output_dir="outputs", model_name="cnn3d_model", epochs=100, batch_size=32):
     """
     Entrena un modelo CNN 3D (binario o multiclase) y lo guarda con el accuracy en el nombre.
 
@@ -47,7 +47,7 @@ def train_cnn3d_model(X, y, output_dir="outputs", model_name="cnn3d_model", epoc
         y: etiquetas (one-hot o binario)
         output_dir: carpeta donde se guardarán los archivos
         model_name: nombre base del modelo
-        epochs: número de épocas
+        epochs: número de épocas (por defecto ahora 100)
         batch_size: tamaño de lote
     """
 
@@ -73,7 +73,6 @@ def train_cnn3d_model(X, y, output_dir="outputs", model_name="cnn3d_model", epoc
     )
 
     # Construir el modelo
-    from src.model.cnn3d import build_cnn3d_model  # asegúrate de que está disponible
     model = build_cnn3d_model(input_shape=X.shape[1:], num_classes=y.shape[1] if y.ndim == 2 else 1)
 
     # Early stopping
