@@ -2,12 +2,15 @@ import pandas as pd
 import os
 from tensorflow.keras.models import load_model
 from src.preprocessing.merge_data import merge_features_with_metadata
-from src.model.cnn3d import load_data, train_cnn3d
+from src.model.cnn3d import load_data, train_cnn3d_model
 from src.dataset.build_dataset import build_dataset, build_dataset_types
 from tensorflow.keras.layers import Conv3D, Dense, MaxPooling3D, Flatten, Dropout
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 import numpy as np
+import glob
+import matplotlib.pyplot as plt
+import pickle
 
 # Variable global para ruta de salida
 output_subfolder = ""
@@ -89,7 +92,6 @@ def construir_dataset():
 def entrenar_modelo():
     X_path = f"{output_subfolder}/X.npy"
     y_path = f"{output_subfolder}/y.npy"
-    model_path = f"{output_subfolder}/cnn3d_model.keras"
 
     if not os.path.exists(X_path) or not os.path.exists(y_path):
         print("❌ Archivos de datos no encontrados. Asegúrate de generar X.npy e y.npy antes de entrenar.")
@@ -99,14 +101,19 @@ def entrenar_modelo():
     X, y = load_data(X_path, y_path)
 
     print("🧠 Entrenando modelo...")
-    model = train_cnn3d(X, y)
 
-    print("💾 Guardando modelo...")
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
-    model.save(model_path)
+    # Determinar nombre del modelo según la tarea
+    if output_subfolder == "Code/outputs/has_cancer":
+        model_name = "cnn3d_model_has_cancer"
+    elif output_subfolder == "Code/outputs/identify_type_cancer":
+        model_name = "cnn3d_model_type"
+    else:
+        print("❌ output_subfolder no reconocido.")
+        return
 
-    print("✅ Modelo entrenado y guardado en:", model_path)
-
+    # Entrenar y guardar automáticamente
+    train_cnn3d_model(X, y, output_dir=output_subfolder, model_name=model_name)
+    
 def mostrar_modelo():
     model_path = f"{output_subfolder}/cnn3d_model.keras"
     model = load_model(model_path)
@@ -139,6 +146,81 @@ def count_dcm_files(base_path: str) -> int:
     print(f"Total de archivos .dcm encontrados: {count}")
     return count
 
+def model_analisis():
+    if output_subfolder == "Code/outputs/has_cancer":
+        model_path = f"{output_subfolder}/cnn3d_model_has_cancer_*.keras"  # con wildcard si hay varios
+        history_path = f"{output_subfolder}/history.pkl"
+    elif output_subfolder == "Code/outputs/identify_type_cancer":
+        model_path = f"{output_subfolder}/cnn3d_model_type_*.keras"
+        history_path = f"{output_subfolder}/history.pkl"
+    else:
+        print("❌ Subcarpeta no reconocida.")
+        return
+
+    # Detectar modelo más reciente
+    model_files = sorted(glob.glob(model_path), reverse=True)
+    if not model_files:
+        print("❌ No se encontró el archivo del modelo.")
+        return
+    model_file = model_files[0]
+
+    # Cargar modelo
+    model = load_model(model_file)
+    print(f"📦 Modelo cargado: {model_file}\n")
+
+    # Estadísticas
+    print("📊 Estadísticas del modelo:")
+    print(f"🧱 Total de capas: {len(model.layers)}")
+    print(f"🔢 Parámetros entrenables: {model.count_params()}")
+
+    conv_layers = sum(1 for l in model.layers if isinstance(l, Conv3D))
+    pool_layers = sum(1 for l in model.layers if isinstance(l, MaxPooling3D))
+    dense_layers = sum(1 for l in model.layers if isinstance(l, Dense))
+    dropout_layers = sum(1 for l in model.layers if isinstance(l, Dropout))
+    flatten_layers = sum(1 for l in model.layers if isinstance(l, Flatten))
+
+    print(f"🌀 Capas Conv3D: {conv_layers}")
+    print(f"🪣 Capas MaxPooling3D: {pool_layers}")
+    print(f"🧠 Capas Dense: {dense_layers}")
+    print(f"🧽 Capas Dropout: {dropout_layers}")
+    print(f"📄 Capas Flatten: {flatten_layers}")
+
+    print("\n📋 Resumen del modelo:")
+    model.summary()
+
+    # Cargar historial
+    if not os.path.exists(history_path):
+        print("⚠️ No se encontró el archivo de historial.")
+        return
+
+    with open(history_path, "rb") as f:
+        history = pickle.load(f)
+
+    # Graficar accuracy y loss
+    plt.figure(figsize=(12, 5))
+
+    # Accuracy
+    plt.subplot(1, 2, 1)
+    plt.plot(history["accuracy"], label="Entrenamiento")
+    plt.plot(history.get("val_accuracy", []), label="Validación")
+    plt.title("Precisión (Accuracy)")
+    plt.xlabel("Época")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.grid(True)
+
+    # Loss
+    plt.subplot(1, 2, 2)
+    plt.plot(history["loss"], label="Entrenamiento")
+    plt.plot(history.get("val_loss", []), label="Validación")
+    plt.title("Pérdida (Loss)")
+    plt.xlabel("Época")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
 if __name__ == "__main__":
     seleccionar_ruta()
 
@@ -148,7 +230,8 @@ if __name__ == "__main__":
     print("3 - Entrenar modelo")
     print("4 - Mostrar arquitectura del modelo")
     print("5 - Contar archivos DICOM")
-    opcion = input("Ingresa el número de la opción: ")
+    print("6 - Análisis del modelo")
+    opcion =  input("Ingresa el número de la opción: ")
 
     if opcion == "1":
         generar_labels()
@@ -161,5 +244,7 @@ if __name__ == "__main__":
     elif opcion == "5":
         ruta = "Data/NSCLC-Radiomics/"
         count_dcm_files(ruta)
+    elif opcion == "6":
+        model_analisis()
     else:
         print("Opción no válida.")

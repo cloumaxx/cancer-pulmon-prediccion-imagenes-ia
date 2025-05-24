@@ -1,57 +1,108 @@
+import pickle
 import numpy as np
+import os
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.optimizers import Adam
 
 def load_data(X_path="outputs/X.npy", y_path="outputs/y.npy"):
     X = np.load(X_path)
-    X = X[..., np.newaxis]  # (samples, H, W, D, 1)
+    if X.ndim == 4:
+        X = X[..., np.newaxis]  # Asegura (samples, H, W, D, 1)
     y = np.load(y_path)
-    y = to_categorical(y)  # one-hot
     return X, y
 
-def build_cnn3d(input_shape, num_classes):
-    model = Sequential([
-        Conv3D(32, kernel_size=3, activation='relu', input_shape=input_shape),
-        MaxPooling3D(pool_size=2),
-        Dropout(0.2),
-        Conv3D(64, kernel_size=3, activation='relu'),
-        MaxPooling3D(pool_size=2),
-        Dropout(0.3),
-        Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.4),
-        Dense(num_classes, activation='softmax') # 4 clases: No cáncer, Adeno, Escamoso, Otro
-    ])
+def build_cnn3d_model(input_shape, num_classes):
+    model = Sequential()
+    model.add(Conv3D(32, kernel_size=3, activation='relu', padding='same', input_shape=input_shape))
+    model.add(MaxPooling3D(pool_size=2))
+    model.add(Dropout(0.2))
 
-    """
-    Capa	            Función
-    Conv3D(32)	        Detecta patrones espaciales 3D locales (texturas, formas) usando 32 filtros 3D.
-    MaxPooling3D(2) 	Reduce el tamaño espacial del volumen, conservando las características más destacadas.
-    Dropout(0.2)	    Apaga aleatoriamente el 20% de las neuronas para evitar overfitting.
-    Conv3D(64)	        Aprende patrones más abstractos y complejos con más filtros.
-    MaxPooling3D(2)	    Vuelve a reducir dimensionalidad, permitiendo aprender jerarquías de representación.
-    Dropout(0.3)	    Ayuda a generalizar el modelo.
-    Flatten()	        Convierte el volumen 3D resultante en un vector 1D para conectarlo con capas densas (fully connected).
-    Dense(128)	        Capa densa con 128 neuronas: aprende combinaciones no lineales complejas de los patrones detectados.
-    Dropout(0.4)	    Último control contra overfitting.
-    Dense(4)	        Capa de salida softmax, con 4 neuronas (una por clase): devuelve la probabilidad de pertenecer a cada clase.
-    """
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    model.add(Conv3D(64, kernel_size=3, activation='relu', padding='same'))
+    model.add(MaxPooling3D(pool_size=2))
+    model.add(Dropout(0.3))
+
+    model.add(Conv3D(128, kernel_size=3, activation='relu', padding='same'))
+    model.add(MaxPooling3D(pool_size=2))
+    model.add(Dropout(0.4))
+
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(num_classes, activation='softmax'))
+
+    model.compile(optimizer=Adam(learning_rate=1e-4),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
     return model
 
-def train_cnn3d(X, y, epochs=30, batch_size=32):
-    X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
+def train_cnn3d_model(X, y, output_dir="outputs", model_name="cnn3d_model", epochs=30, batch_size=32):
+    """
+    Entrena un modelo CNN 3D (binario o multiclase) y lo guarda con el accuracy en el nombre.
 
-    model = build_cnn3d(input_shape=X.shape[1:], num_classes=y.shape[1])
+    Parámetros:
+        X: numpy array de volúmenes (N, H, W, D, 1)
+        y: etiquetas (one-hot o binario)
+        output_dir: carpeta donde se guardarán los archivos
+        model_name: nombre base del modelo
+        epochs: número de épocas
+        batch_size: tamaño de lote
+    """
+
+    # Detectar si y es one-hot (2D) o etiquetas simples (1D)
+    if y.ndim == 2:
+        stratify_values = y.argmax(axis=1)
+    else:
+        stratify_values = y
+
+    # 1. Dividir en 70% train y 30% temporal
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        X, y, stratify=stratify_values, test_size=0.30, random_state=42
+    )
+
+    # 2. Dividir temporal en 10% val y 20% test
+    if y_temp.ndim == 2:
+        stratify_temp = y_temp.argmax(axis=1)
+    else:
+        stratify_temp = y_temp
+
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, stratify=stratify_temp, test_size=2/3, random_state=42
+    )
+
+    # Construir el modelo
+    from src.model.cnn3d import build_cnn3d_model  # asegúrate de que está disponible
+    model = build_cnn3d_model(input_shape=X.shape[1:], num_classes=y.shape[1] if y.ndim == 2 else 1)
+
+    # Early stopping
     early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-    model.fit(X_train, y_train, validation_split=0.1,
-              epochs=epochs, batch_size=batch_size, callbacks=[early_stop])
+    # Entrenar
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=[early_stop],
+        verbose=1
+    )
 
-    loss, acc = model.evaluate(X_test, y_test)
+    # Guardar historial
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "history.pkl"), "wb") as f:
+        pickle.dump(history.history, f)
 
-    print(f"Test accuracy: {acc:.4f}")
+    # Evaluar
+    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"✅ Test accuracy: {acc:.4f}")
+
+    # Guardar modelo con accuracy en el nombre
+    acc_percent = round(acc * 100)
+    model_filename = f"{model_name}_{acc_percent}.keras"
+    model_path = os.path.join(output_dir, model_filename)
+    model.save(model_path)
+    print(f"💾 Modelo guardado en: {model_path}")
+
     return model
