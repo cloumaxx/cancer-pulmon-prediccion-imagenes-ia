@@ -1,5 +1,9 @@
 import pandas as pd
 
+""""
+    features_path="data/features.csv",
+    metadata_path="data/metadata.csv
+"""
 def merge_features_with_metadata(features_path, metadata_path):
     # Cargar los archivos
     features_df = pd.read_csv(features_path)
@@ -16,6 +20,7 @@ def merge_features_with_metadata(features_path, metadata_path):
     Survival.time	    Tiempo de supervivencia en días desde el diagnóstico o inicio del seguimiento hasta la muerte o último control. En este caso: 2165 días (~5.9 años).
     deadstatus.event	Evento de fallecimiento: 1 indica que el paciente murió, 0 indica que aún vive o está censado.
     """
-    features_filter_df = features_df[features_df['Histology'].notna()]
+    #features_filter_df = features_df[features_df['Histology'].notna()]
+    features_df['has_cancer'] = features_df['Histology'].notna().astype(int)
 
-    return features_filter_df
+    return features_df

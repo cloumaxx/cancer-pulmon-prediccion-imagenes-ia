@@ -162,3 +162,7 @@ cython_debug/
 Code/outputs/cnn3d_model.keras
 Code/outputs/X.npy
 Code/outputs/cnn3d_model.h5
+*.npy
+*.keras
+*.npy
+*.h5

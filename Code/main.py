@@ -1,54 +1,115 @@
 import pandas as pd
 import os
-
-# Importaciones según cada opción
 from tensorflow.keras.models import load_model
 from src.preprocessing.merge_data import merge_features_with_metadata
 from src.model.cnn3d import load_data, train_cnn3d
-from src.dataset.build_dataset import build_dataset
-from tensorflow.keras.models import load_model
+from src.dataset.build_dataset import build_dataset, build_dataset_types
 from tensorflow.keras.layers import Conv3D, Dense, MaxPooling3D, Flatten, Dropout
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+import numpy as np
+
+# Variable global para ruta de salida
+output_subfolder = ""
+
+def seleccionar_ruta():
+    global output_subfolder
+    print("Selecciona el tipo de modelo:")
+    print("1 - ¿Tiene cáncer?")
+    print("2 - Tipo de cáncer")
+    tipo = input("Ingresa el número de la opción: ")
+
+    if tipo == "1":
+        output_subfolder = "Code/outputs/has_cancer"
+    elif tipo == "2":
+        output_subfolder = "Code/outputs/identify_type_cancer"
+    else:
+        print("Opción inválida. Se usará por defecto 'has_cancer'.")
+        output_subfolder = "Code/outputs/has_cancer"
 
 def generar_labels():
+    print(f"Generando clinical_labels para: {output_subfolder}")
+    
     merged_df = merge_features_with_metadata(
-        features_path="data/features.csv",
-        metadata_path="data/metadata.csv"
+        features_path="Data/features.csv",
+        metadata_path="Data/metadata.csv"
     )
-    merged_df.to_csv("outputs/features.csv", index=False)
+    os.makedirs(output_subfolder, exist_ok=True)
+    merged_df.to_csv(f"{output_subfolder}/features.csv", index=False)
 
-    df = pd.read_csv("outputs/features.csv")
+    df = pd.read_csv(f"{output_subfolder}/features.csv")
 
-    def map_histology_to_class(hist):
-        hist = hist.lower().strip()
-        if hist in ["no cancer", "none"]:
-            return 0
-        elif "adeno" in hist:
-            return 1
-        elif "squamous" in hist:
-            return 2
-        else:
-            return 3
+    if output_subfolder == "Code/outputs/has_cancer":
+        df[["PatientID", "has_cancer"]].to_csv(f"{output_subfolder}/clinical_labels.csv", index=False)
+        print("✅ clinical_labels.csv (has_cancer) generado correctamente.")
 
-    df["CancerClass"] = df["Histology"].apply(map_histology_to_class)
-    df[["PatientID", "CancerClass"]].to_csv("data/clinical_labels.csv", index=False)
-    print("✅ clinical_labels.csv generado correctamente.")
+    elif output_subfolder == "Code/outputs/identify_type_cancer":
+        # Preprocesar columna Histology
+        df["Histology"] = df["Histology"].fillna("no cancer").str.lower().str.strip()
+
+        # Codificación con ColumnTransformer
+        ct = ColumnTransformer(
+            transformers=[("onehot", OneHotEncoder(sparse_output=False), ["Histology"])],
+            remainder="drop"
+        )
+        one_hot_labels = ct.fit_transform(df[["Histology"]])
+
+        # Guardar etiquetas one-hot junto a PatientID
+        patient_ids = df["PatientID"].values.reshape(-1, 1)
+        result_array = np.hstack([patient_ids, one_hot_labels])
+        result_df = pd.DataFrame(result_array, columns=["PatientID"] + list(ct.named_transformers_["onehot"].get_feature_names_out(["Histology"])))
+        result_df.to_csv(f"{output_subfolder}/clinical_labels.csv", index=False)
+
+        # Guardar las clases
+        class_names = ct.named_transformers_["onehot"].categories_[0].tolist()
+        pd.Series(class_names).to_csv(f"{output_subfolder}/class_names.csv", index=False)
+
+        print(f"✅ clinical_labels.csv y class_names.csv (tipo de cáncer) generados correctamente.")
+    else:
+        print("❌ No se reconoce el tipo de salida en output_subfolder.")
 
 def construir_dataset():
-    build_dataset(
-        base_path="../Data/NSCLC-Radiomics",
-        clinical_csv="../Data/clinical_labels.csv",
-        output_dir="outputs",
-        shape=(64, 64, 64)
-    )
+    base_path = os.path.abspath("Data/NSCLC-Radiomics")
+
+    if(output_subfolder == "Code/outputs/has_cancer"):
+        build_dataset(
+            base_path=base_path,
+            clinical_csv=f"{output_subfolder}/clinical_labels.csv",
+            output_dir=output_subfolder,
+            shape=(64, 64, 64)
+        )
+    else:
+        build_dataset_types(
+            base_path=base_path,
+            clinical_csv=f"{output_subfolder}/clinical_labels.csv",
+            output_dir=output_subfolder,
+            shape=(64, 64, 64)
+        )
 
 def entrenar_modelo():
-    X, y = load_data("outputs/X.npy", "outputs/y.npy")
+    X_path = f"{output_subfolder}/X.npy"
+    y_path = f"{output_subfolder}/y.npy"
+    model_path = f"{output_subfolder}/cnn3d_model.keras"
+
+    if not os.path.exists(X_path) or not os.path.exists(y_path):
+        print("❌ Archivos de datos no encontrados. Asegúrate de generar X.npy e y.npy antes de entrenar.")
+        return
+
+    print("📥 Cargando datos...")
+    X, y = load_data(X_path, y_path)
+
+    print("🧠 Entrenando modelo...")
     model = train_cnn3d(X, y)
-    model.save("outputs/cnn3d_model.keras")
-    print("✅ Modelo entrenado y guardado.")
+
+    print("💾 Guardando modelo...")
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    model.save(model_path)
+
+    print("✅ Modelo entrenado y guardado en:", model_path)
 
 def mostrar_modelo():
-    model = load_model("Code\outputs\cnn3d_model.keras")
+    model_path = f"{output_subfolder}/cnn3d_model.keras"
+    model = load_model(model_path)
     print("📊 Estadísticas del modelo:\n")
 
     total_layers = len(model.layers)
@@ -79,7 +140,9 @@ def count_dcm_files(base_path: str) -> int:
     return count
 
 if __name__ == "__main__":
-    print("Selecciona una opción:")
+    seleccionar_ruta()
+
+    print("\nSelecciona una opción:")
     print("1 - Generar clinical_labels.csv")
     print("2 - Construir dataset")
     print("3 - Entrenar modelo")

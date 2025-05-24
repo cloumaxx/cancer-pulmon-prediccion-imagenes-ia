@@ -1,43 +1,151 @@
 import os
 import pandas as pd
 import numpy as np
-from src.io.file_finder import find_ct_and_seg_paths
+from sklearn.preprocessing import OneHotEncoder
+from packaging import version
+import sklearn
 from src.preprocessing.ct_loader import load_ct_volume
 
 def build_dataset(base_path, clinical_csv, output_dir, shape=(64, 64, 64)):
-    labels_df = pd.read_csv(clinical_csv) 
-    
+    labels_df = pd.read_csv(clinical_csv)
+
+    if "PatientID" not in labels_df.columns or "has_cancer" not in labels_df.columns:
+        print("Faltan columnas necesarias en el archivo CSV.")
+        return
+
+    total = len(labels_df)
     X = []
     y = []
 
-    for _, row in labels_df.iterrows():
+    procesados = 0
+    exitosos = 0
+    fallidos = 0
+
+    for i, (_, row) in enumerate(labels_df.iterrows(), 1):
         patient_id = row["PatientID"]
-        label = row["CancerClass"]
+        label = row["has_cancer"]
 
-        patient_dir = os.path.join(base_path, patient_id)
-        if not os.path.isdir(patient_dir):
+        # Buscar carpeta del paciente
+        patient_folders = [d for d in os.listdir(base_path) if d.startswith(patient_id)]
+        if not patient_folders:
+            print(f"[{i}/{total}] No se encontró carpeta para {patient_id}")
+            fallidos += 1
             continue
 
-        study_dirs = os.listdir(patient_dir)
-        if len(study_dirs) == 0:
+        patient_dir = os.path.join(base_path, patient_folders[0])
+
+        encontrado = False
+        for root, dirs, files in os.walk(patient_dir):
+            dicom_files = [f for f in files if f.lower().endswith(".dcm")]
+            if dicom_files:
+                try:
+                    volume = load_ct_volume(root, target_shape=shape)
+                    if volume.shape != shape:
+                        print(f"[{i}/{total}] Forma incorrecta en {patient_id}: {volume.shape}")
+                        fallidos += 1
+                        break
+                    X.append(volume)
+                    y.append(label)
+                    exitosos += 1
+                    encontrado = True
+                    print(f"[{i}/{total}] Procesado {patient_id} ✔️")
+                    break
+                except Exception as e:
+                    print(f"[{i}/{total}] Error al procesar {patient_id}: {e}")
+                    fallidos += 1
+                    break
+
+        if not encontrado:
+            print(f"[{i}/{total}] No se encontró CT válido en {patient_id}")
+            fallidos += 1
+
+        procesados += 1
+
+    print(f"\nProcesados: {procesados}, Éxitos: {exitosos}, Fallidos: {fallidos}")
+
+    # Guardar arrays
+    if exitosos > 0:
+        X = np.stack(X)
+        y = np.array(y)
+        os.makedirs(output_dir, exist_ok=True)
+        np.save(os.path.join(output_dir, "X.npy"), X)
+        np.save(os.path.join(output_dir, "y.npy"), y)
+        print(f"\n✅ Dataset guardado: {X.shape} volúmenes, {len(y)} etiquetas.")
+    else:
+        print("❌ No se generó ningún volumen válido.")
+
+def build_dataset_types(base_path, clinical_csv, output_dir, shape=(64, 64, 64)):
+    labels_df = pd.read_csv(clinical_csv)
+
+    if "PatientID" not in labels_df.columns:
+        print("Falta la columna 'PatientID' en el archivo CSV.")
+        return
+
+    # Detectar columnas one-hot
+    label_columns = [col for col in labels_df.columns if col.startswith("Histology_")]
+    if not label_columns:
+        print("❌ No se encontraron columnas one-hot (tipo Histology_*) en el CSV.")
+        return
+
+    total = len(labels_df)
+    X = []
+    y = []
+
+    procesados = 0
+    exitosos = 0
+    fallidos = 0
+
+    for i, (_, row) in enumerate(labels_df.iterrows(), 1):
+        patient_id = str(row["PatientID"])
+        label_vector = row[label_columns].values.astype(np.float32)
+
+        patient_folders = [d for d in os.listdir(base_path) if d.startswith(patient_id)]
+        if not patient_folders:
+            print(f"[{i}/{total}] No se encontró carpeta para {patient_id}")
+            fallidos += 1
             continue
 
-        study_path = os.path.join(patient_dir, study_dirs[0])
-        ct_path, seg_path = find_ct_and_seg_paths(study_path)
-        if ct_path is None:
-            continue
+        patient_dir = os.path.join(base_path, patient_folders[0])
+        encontrado = False
 
-        try:
-            volume = load_ct_volume(ct_path, target_shape=shape)
-            X.append(volume)
-            y.append(label)
-        except Exception as e:
-            print(f"Error en {patient_id}: {e}")
+        for root, dirs, files in os.walk(patient_dir):
+            dicom_files = [f for f in files if f.lower().endswith(".dcm")]
+            if dicom_files:
+                try:
+                    volume = load_ct_volume(root, target_shape=shape)
+                    if volume.shape != shape:
+                        print(f"[{i}/{total}] Forma incorrecta en {patient_id}: {volume.shape}")
+                        fallidos += 1
+                        break
+                    X.append(volume)
+                    y.append(label_vector)
+                    exitosos += 1
+                    encontrado = True
+                    print(f"[{i}/{total}] Procesado {patient_id} ✔️")
+                    break
+                except Exception as e:
+                    print(f"[{i}/{total}] Error al procesar {patient_id}: {e}")
+                    fallidos += 1
+                    break
 
-    X = np.array(X)
-    y = np.array(y)
+        if not encontrado:
+            print(f"[{i}/{total}] No se encontró CT válido en {patient_id}")
+            fallidos += 1
 
-    # Guardar
-    np.save(os.path.join(output_dir, "X.npy"), X)
-    np.save(os.path.join(output_dir, "y.npy"), y)
-    print(f"Dataset guardado: {X.shape} volúmenes, {len(y)} etiquetas.")
+        procesados += 1
+
+    print(f"\nProcesados: {procesados}, Éxitos: {exitosos}, Fallidos: {fallidos}")
+
+    if exitosos > 0:
+        X = np.stack(X)
+        y = np.stack(y)
+
+        os.makedirs(output_dir, exist_ok=True)
+        np.save(os.path.join(output_dir, "X.npy"), X)
+        np.save(os.path.join(output_dir, "y.npy"), y)
+
+        pd.Series(label_columns).to_csv(os.path.join(output_dir, "class_names.csv"), index=False)
+
+        print(f"\n✅ Dataset guardado: {X.shape} volúmenes, {y.shape} etiquetas one-hot.")
+    else:
+        print("❌ No se generó ningún volumen válido.")
